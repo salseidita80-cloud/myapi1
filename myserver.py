@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends, status
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from datetime import date, datetime, timezone
@@ -13,23 +13,25 @@ app.add_middleware(
     allow_origins=[
         "http://127.0.0.1:5500",
         "http://localhost:5500",
-        "https://zhangsgithub04.github.io"
+        "https://zhangsgithub04.github.io",
     ],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+MY_API_KEY = os.getenv("MY_API_KEY")
 
 if not SUPABASE_URL:
     raise RuntimeError("Missing SUPABASE_URL")
 
 if not SUPABASE_KEY:
     raise RuntimeError("Missing SUPABASE_KEY")
+
+if not MY_API_KEY:
+    raise RuntimeError("Missing MY_API_KEY")
 
 if not SUPABASE_URL.startswith("https://") or "supabase.co" not in SUPABASE_URL:
     raise RuntimeError(f"Invalid SUPABASE_URL: {SUPABASE_URL}")
@@ -39,6 +41,15 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def require_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
+    if x_api_key != MY_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
+    return x_api_key
 
 
 class PresidentCreate(BaseModel):
@@ -58,12 +69,12 @@ async def root():
     response = supabase.table("president").select("*", count="exact").execute()
     return {
         "message": "President API is running",
-        "president_count": response.count
+        "president_count": response.count,
     }
 
 
 @app.get("/presidents")
-async def list_presidents():
+async def list_presidents(api_key: str = Depends(require_api_key)):
     response = (
         supabase
         .table("president")
@@ -74,8 +85,14 @@ async def list_presidents():
     return response.data
 
 
+@app.get("/presidents/count")
+async def count_presidents(api_key: str = Depends(require_api_key)):
+    response = supabase.table("president").select("*", count="exact").execute()
+    return {"count": response.count}
+
+
 @app.get("/presidents/{president_id}")
-async def get_president(president_id: int):
+async def get_president(president_id: int, api_key: str = Depends(require_api_key)):
     response = (
         supabase
         .table("president")
@@ -91,12 +108,15 @@ async def get_president(president_id: int):
 
 
 @app.post("/presidents", status_code=201)
-async def create_president(president: PresidentCreate):
+async def create_president(
+    president: PresidentCreate,
+    api_key: str = Depends(require_api_key),
+):
     payload = {
         "firstname": president.firstname.strip(),
         "lastname": president.lastname.strip(),
         "birthdate": president.birthdate.isoformat() if president.birthdate else None,
-        "updated_at": utc_now_iso()
+        "updated_at": utc_now_iso(),
     }
 
     response = supabase.table("president").insert(payload).execute()
@@ -108,7 +128,11 @@ async def create_president(president: PresidentCreate):
 
 
 @app.patch("/presidents/{president_id}")
-async def update_president(president_id: int, president: PresidentUpdate):
+async def update_president(
+    president_id: int,
+    president: PresidentUpdate,
+    api_key: str = Depends(require_api_key),
+):
     update_data = president.model_dump(exclude_none=True)
 
     if "firstname" in update_data:
@@ -140,12 +164,16 @@ async def update_president(president_id: int, president: PresidentUpdate):
 
 
 @app.put("/presidents/{president_id}")
-async def replace_president(president_id: int, president: PresidentCreate):
+async def replace_president(
+    president_id: int,
+    president: PresidentCreate,
+    api_key: str = Depends(require_api_key),
+):
     payload = {
         "firstname": president.firstname.strip(),
         "lastname": president.lastname.strip(),
         "birthdate": president.birthdate.isoformat() if president.birthdate else None,
-        "updated_at": utc_now_iso()
+        "updated_at": utc_now_iso(),
     }
 
     response = (
@@ -163,7 +191,10 @@ async def replace_president(president_id: int, president: PresidentCreate):
 
 
 @app.delete("/presidents/{president_id}")
-async def delete_president(president_id: int):
+async def delete_president(
+    president_id: int,
+    api_key: str = Depends(require_api_key),
+):
     response = (
         supabase
         .table("president")
